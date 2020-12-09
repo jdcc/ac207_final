@@ -1,6 +1,7 @@
 import jax.numpy as np
 from jax import grad
 from jax.experimental.optimizers import adam
+import numpy
 
 class Feedforward:
     def __init__(self, architecture, random=None, weights=None):
@@ -30,7 +31,7 @@ class Feedforward:
         if random is not None:
             self.random = random
         else:
-            self.random = np.random.RandomState(0)
+            self.random = numpy.random.RandomState(0)
 
         self.h = architecture['activation_fn']
 
@@ -152,7 +153,7 @@ class Feedforward:
         for i in range(random_restarts):
             if optimizer == 'adam':
                 opt_init, opt_update, get_params = adam(step_size=step_size)
-                opt_state = opt_init(params)
+                opt_state = opt_init(weights_init)
                 
                 def step(step, opt_state):
                     weights = get_params(opt_state)
@@ -162,10 +163,10 @@ class Feedforward:
                     opt_state = opt_update(step, grads, opt_state)
                     if step % check_point == 0:
                         print(f"Iteration {step} lower bound {objective:.4f}; gradient mag: {np.linalg.norm(grads):.4f}")
-                    return value, opt_state
+                    return objective, opt_state
 
                 for step in range(max_iteration):
-                    value, opt_state = step(step, opt_state)
+                    objective, opt_state = step(step, opt_state)
                 
                 #adam(self.gradient, weights_init, step_size=step_size, num_iters=max_iteration, callback=call_back)
             local_opt = np.min(self.objective_trace[-100:])
