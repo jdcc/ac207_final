@@ -1,5 +1,6 @@
 import jax.numpy as np
 from jax import grad
+import jax
 from jax.experimental.optimizers import adam
 import numpy
 
@@ -108,7 +109,7 @@ class Feedforward:
         assert y_train.shape[0] == self.params['D_out']
 
         ### make objective function for training
-        self.objective, self.gradient = self.make_objective(x_train, y_train, reg_param)
+        self.objective = self.make_objective(x_train, y_train, reg_param)
 
         ### set up optimization
         step_size = 0.01
@@ -136,16 +137,6 @@ class Feedforward:
         if 'random_restarts' in params.keys():
             random_restarts = params['random_restarts']
 
-
-    
-        def call_back(weights, iteration, g):
-            ''' Actions per optimization step '''
-            objective = self.objective(weights, iteration)
-            self.objective_trace = np.vstack((self.objective_trace, objective))
-            self.weight_trace = np.vstack((self.weight_trace, weights))
-            if iteration % check_point == 0:
-                print(f"Iteration {iteration} lower bound {objective:.4f}; gradient mag: {np.linalg.norm(self.gradient(weights, iteration)):.4f}")
-
         ### train with random restarts
         optimal_obj = 1e16
         optimal_weights = self.weights
@@ -155,18 +146,18 @@ class Feedforward:
                 opt_init, opt_update, get_params = adam(step_size=step_size)
                 opt_state = opt_init(weights_init)
                 
-                def step(step, opt_state):
+                def step(iteration, opt_state):
                     weights = get_params(opt_state)
                     objective, grads = jax.value_and_grad(self.objective)(weights)
                     self.objective_trace = np.vstack((self.objective_trace, objective))
                     self.weight_trace = np.vstack((self.weight_trace, weights))
-                    opt_state = opt_update(step, grads, opt_state)
-                    if step % check_point == 0:
-                        print(f"Iteration {step} lower bound {objective:.4f}; gradient mag: {np.linalg.norm(grads):.4f}")
+                    opt_state = opt_update(iteration, grads, opt_state)
+                    if iteration % check_point == 0:
+                        print(f"Iteration {iteration} lower bound {objective:.4f}; gradient mag: {np.linalg.norm(grads):.4f}")
                     return objective, opt_state
 
-                for step in range(max_iteration):
-                    objective, opt_state = step(step, opt_state)
+                for i in range(max_iteration):
+                    objective, opt_state = step(i, opt_state)
                 
                 #adam(self.gradient, weights_init, step_size=step_size, num_iters=max_iteration, callback=call_back)
             local_opt = np.min(self.objective_trace[-100:])
@@ -209,11 +200,10 @@ class Feedforward:
             eps = np.finfo(y_prob.dtype).eps
             y_prob = np.clip(y_prob, eps, 1 - eps)
             
-            value = -(xlogy(y_train, y_prob) +
-                xlogy(1 - y_train, 1 - y_prob)).sum() / y_prob.shape[0]
+            value = -(xlogy(y_train, y_prob) + xlogy(1 - y_train, 1 - y_prob)).sum() / y_prob.shape[0]
             return value
 
-        return objective, grad(objective)
+        return objective
     
 def xlogy(x, y):
     # Not fast like the scipy version
