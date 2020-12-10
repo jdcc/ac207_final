@@ -2,6 +2,7 @@ from jax import grad, random, value_and_grad
 import jax.numpy as np
 from jax.experimental.optimizers import adam
 from jax.scipy.special import xlogy
+from tqdm.auto import tqdm, trange
 
 class Feedforward:
     def __init__(self, architecture, random_key=None, weights=None):
@@ -41,8 +42,8 @@ class Feedforward:
         else:
             self.weights = weights
 
-        self.objective_trace = np.empty((1, 1))
-        self.weight_trace = np.empty((1, self.D))
+        self.objective_trace = []
+        self.weight_trace = []
 
 
     def forward(self, weights, x):
@@ -166,22 +167,22 @@ class Feedforward:
                 def step(iteration, opt_state):
                     weights = get_params(opt_state)
                     objective, grads = value_and_grad(self.objective)(weights)
-                    self.objective_trace = np.vstack((self.objective_trace, objective))
-                    self.weight_trace = np.vstack((self.weight_trace, weights))
                     opt_state = opt_update(iteration, grads, opt_state)
                     if iteration % check_point == 0:
                         print(f"Iteration {iteration} lower bound {objective:.4f}; gradient mag: {np.linalg.norm(grads):.4f}")
                     return objective, opt_state
 
-                for i in range(max_iteration):
+                for i in trange(max_iteration):
                     objective, opt_state = step(i, opt_state)
+                    self.objective_trace.append(objective)
+                    self.weight_trace.append(get_params(opt_state))
                 
                 #adam(self.gradient, weights_init, step_size=step_size, num_iters=max_iteration, callback=call_back)
-            local_opt = np.min(self.objective_trace[-100:])
+            local_opt = np.min(np.array(self.objective_trace[-100:]))
             
             if local_opt < optimal_obj:
-                opt_index = np.argmin(self.objective_trace[-100:])
-                self.weights = self.weight_trace[-100:][opt_index].reshape((1, -1))
+                opt_index = np.argmin(np.array(self.objective_trace[-100:]))
+                self.weights = np.array(self.weight_trace[-100:])[opt_index].reshape((1, -1))
             self.random_key, subkey = random.split(self.random_key)
             weights_init = random.normal(subkey, shape=(1, self.D))
 

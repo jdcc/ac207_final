@@ -1,7 +1,8 @@
-from jax import jit, value_and_grad, device_put, random
+from jax import jit, value_and_grad, random, device_put
 from jax.experimental.optimizers import adam
 import jax.numpy as np
 import jax.scipy.stats.norm as norm
+#from jax.profiler import trace_function
 
 from tqdm.auto import tqdm, trange
 
@@ -21,8 +22,8 @@ class VAE:
         self.decoder = Feedforward(decoder_architecture, random_key=random_key, weights=decoder_weights)
         self.encoder = Feedforward(encoder_architecture, random_key=random_key, weights=encoder_weights)
 
-        self.objective_trace = np.empty((1, 1))
-        self.param_trace = np.empty((1, self.decoder.D + self.encoder.D))
+        self.objective_trace = []
+        self.param_trace = []
         self.S = 10
 
         if random_key is not None:
@@ -84,7 +85,6 @@ class VAE:
         N = x_train.shape[1]
         x_dummy = np.zeros((self.S, self.x_dim, N))
 
-           
         def variational_objective(params):
             '''definition of the ELBO'''
             encoder_weights, decoder_weights = self.unpack_weights(params)
@@ -124,16 +124,16 @@ class VAE:
             #return the negative elbo to be minimized
             return -elbo
             
-            
-        return jit(variational_objective)
+        return variational_objective
     
                           
     def fit(self, x_train, S=None, params=None):
         '''minimize -ELBO'''
+        x_train = device_put(x_train)
         assert x_train.shape[0] == self.x_dim
 
         ### make objective function for training
-        objective = self.make_objective(device_put(x_train), S)
+        objective = self.make_objective(x_train, S)
 
         ### set up optimization
         step_size = 0.01
@@ -170,26 +170,27 @@ class VAE:
             if optimizer == 'adam':
                 opt_init, opt_update, get_params = adam(step_size=step_size)
                 opt_state = opt_init(param_init)
+                objective_val_and_grad = value_and_grad(objective)
                 
                 def step(iteration, opt_state):
                     params = get_params(opt_state)
-                    objective_val, grads = value_and_grad(objective)(params)
-                    self.objective_trace = np.vstack((self.objective_trace, objective_val))
-                    self.param_trace = np.vstack((self.param_trace, params))
+                    objective_val, grads = objective_val_and_grad(params)
                     opt_state = opt_update(iteration, grads, opt_state)
                     if iteration % check_point == 0:
                         print(f"Iteration {iteration} lower bound {objective_val:.4f}; gradient mag: {np.linalg.norm(grads):.4f}")
-                    return objective_val, opt_state
+                    return objective_val, params, opt_state
 
                 for i in trange(max_iteration, smoothing=0):
-                    objective_val, opt_state = step(i, opt_state)
+                    objective_val, params, opt_state = step(i, opt_state)
+                    self.objective_trace.append(objective_val)
+                    self.param_trace.append(params)
                 
                 #adam(gradient, param_init, step_size=step_size, num_iters=max_iteration, callback=call_back)
-            local_opt = np.min(self.objective_trace[1:])
+            local_opt = np.min(np.array(self.objective_trace)[1:])
             
             if local_opt < optimal_obj:
-                opt_index = np.argmin(self.objective_trace[1:])
-                opt_params = self.param_trace[1:][opt_index].reshape((1, -1))
+                opt_index = np.argmin(np.array(self.objective_trace)[1:])
+                opt_params = np.array(self.param_trace)[1:][opt_index].reshape((1, -1))
                 self.opt_params = opt_params
                 encoder_weights, decoder_weights = self.unpack_weights(opt_params)
                 self.decoder.weights = decoder_weights
