@@ -2,6 +2,7 @@ import jax.numpy as np
 from jax import grad
 import jax
 from jax.experimental.optimizers import adam
+from jax.scipy.special import xlogy
 import numpy
 
 class Feedforward:
@@ -95,6 +96,23 @@ class Feedforward:
 
         return output
     
+    def predict(self, X, threshold=0.5):
+        prob = self.predict_proba(X)
+
+        if self.params['task'] == 'classification':
+            return prob > threshold
+        elif self.params['task'] == 'regression':
+            return prob
+        else:
+            raise ArgumentError('Unknown task')
+            
+    def predict_proba(self, X):
+        weights = self.weights.reshape(1, -1)
+        weights = self.weight_trace[-1].reshape(1, -1)
+        output = self.forward(weights, X.T).squeeze()
+
+        return output
+        
     
     def make_objective(self, x_train, y_train, reg_param):
         if self.params['task'] == 'regression':
@@ -200,11 +218,11 @@ class Feedforward:
             eps = np.finfo(y_prob.dtype).eps
             y_prob = np.clip(y_prob, eps, 1 - eps)
             
-            value = -(xlogy(y_train, y_prob) + xlogy(1 - y_train, 1 - y_prob)).sum() / y_prob.shape[0]
+            value = binary_crossentropy(y_train, y_prob)
             return value
 
         return objective
     
-def xlogy(x, y):
-    # Not fast like the scipy version
-    return x * np.log(y)
+def binary_crossentropy(true, prob):
+    return -(xlogy(true, prob) + xlogy(1 - true, 1 - prob)).sum() / prob.shape[0]
+    
