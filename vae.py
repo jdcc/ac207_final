@@ -1,14 +1,14 @@
-from jax import jit, value_and_grad
+from jax import jit, value_and_grad, device_put, random
 from jax.experimental.optimizers import adam
 import jax.numpy as np
 import jax.scipy.stats.norm as norm
 
-import numpy # This is used for randomness, but should be replaced
+from tqdm.auto import tqdm, trange
 
 from nn_models import Feedforward
 
 class VAE:
-    def __init__(self, decoder_architecture, encoder_architecture, x_var, random=None, decoder_weights=None, encoder_weights=None):
+    def __init__(self, decoder_architecture, encoder_architecture, x_var, random_key=None, decoder_weights=None, encoder_weights=None):
         '''constructor'''
         self.x_dim = decoder_architecture['output_dim']
         self.z_dim = decoder_architecture['input_dim']
@@ -18,21 +18,23 @@ class VAE:
         assert encoder_architecture['input_dim'] == self.x_dim
         assert encoder_architecture['output_dim'] == self.z_dim * 2
 
-        self.decoder = Feedforward(decoder_architecture, random=random, weights=decoder_weights)
-        self.encoder = Feedforward(encoder_architecture, random=random, weights=encoder_weights)
+        self.decoder = Feedforward(decoder_architecture, random_key=random_key, weights=decoder_weights)
+        self.encoder = Feedforward(encoder_architecture, random_key=random_key, weights=encoder_weights)
 
         self.objective_trace = np.empty((1, 1))
         self.param_trace = np.empty((1, self.decoder.D + self.encoder.D))
         self.S = 10
 
-        if random is not None:
-            self.random = random
+        if random_key is not None:
+            self.random_root_key = random_key
         else:
-            self.random = numpy.random.RandomState(0)
+            self.random_root_key = random.PRNGKey(0)
+        self.random_key = self.random_root_key
             
     def generate(self, weights=None, N=100):
         '''use the generative model to generate x given zs sampled from the prior'''
-        z_samples = self.random.normal(0, 1, size=(self.z_dim, N))
+        self.random_key, subkey = random.split(self.random_key)
+        z_samples = random.normal(subkey, shape=(self.z_dim, N))
 
         if weights is None:
             x_samples = self.decoder.forward(self.decoder.weights, z_samples)
@@ -96,7 +98,8 @@ class VAE:
             assert mean.shape == (self.z_dim, N)
             
             #sample z's
-            z_samples = numpy.random.normal(0, 1, size=(self.S, self.z_dim, N)) * std + mean
+            self.random_key, subkey = random.split(self.random_key)
+            z_samples = random.normal(subkey, shape=(self.S, self.z_dim, N)) * std + mean
             assert z_samples.shape == (self.S, self.z_dim, N)
             
             #predict x's
@@ -130,13 +133,14 @@ class VAE:
         assert x_train.shape[0] == self.x_dim
 
         ### make objective function for training
-        objective = self.make_objective(x_train, S)
+        objective = self.make_objective(device_put(x_train), S)
 
         ### set up optimization
         step_size = 0.01
         max_iteration = 5000
         check_point = 100
-        param_init = self.random.normal(0, 0.3, size=(1, self.decoder.D + self.encoder.D))
+        # Use the root key so params are always inited to the same values on every fit call
+        param_init = random.normal(self.random_root_key, shape=(1, self.decoder.D + self.encoder.D)) * 0.3
         mass = None
         optimizer = 'adam'
         random_restarts = 1
@@ -177,7 +181,7 @@ class VAE:
                         print(f"Iteration {iteration} lower bound {objective_val:.4f}; gradient mag: {np.linalg.norm(grads):.4f}")
                     return objective_val, opt_state
 
-                for i in range(max_iteration):
+                for i in trange(max_iteration, smoothing=0):
                     objective_val, opt_state = step(i, opt_state)
                 
                 #adam(gradient, param_init, step_size=step_size, num_iters=max_iteration, callback=call_back)
@@ -192,7 +196,9 @@ class VAE:
                 self.encoder.weights = encoder_weights
                 optimal_obj = local_opt
 
-            param_init = self.random.normal(0, 0.1, size=(1, self.decoder.D + self.encoder.D))
+            # Now we actually want new initialization params, so make a new key
+            self.random_key, subkey = random.split(self.random_key)
+            param_init = random.normal(subkey, shape=(1, self.decoder.D + self.encoder.D)) * 0.1
 
         self.objective_trace = self.objective_trace[1:]
         self.param_trace = self.param_trace[1:]

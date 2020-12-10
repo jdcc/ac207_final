@@ -1,12 +1,10 @@
+from jax import grad, random, value_and_grad
 import jax.numpy as np
-from jax import grad
-import jax
 from jax.experimental.optimizers import adam
 from jax.scipy.special import xlogy
-import numpy
 
 class Feedforward:
-    def __init__(self, architecture, random=None, weights=None):
+    def __init__(self, architecture, random_key=None, weights=None):
         self.params = {'H': architecture['width'],
                        'L': architecture['hidden_layers'],
                        'D_in': architecture['input_dim'],
@@ -30,15 +28,16 @@ class Feedforward:
         for i in range(len(self.params['H'])-1):
             self.D += self.params['H'][i] * self.params['H'][i+1] + self.params['H'][i+1]
 
-        if random is not None:
-            self.random = random
+        if random_key is not None:
+            self.random_root_key = random_key
         else:
-            self.random = numpy.random.RandomState(0)
+            self.random_root_key = random.PRNGKey(0)
+        self.random_key = self.random_root_key
 
         self.h = architecture['activation_fn']
 
         if weights is None:
-            self.weights = self.random.normal(0, 1, size=(1, self.D))
+            self.weights = random.normal(self.random_key, shape=(1, self.D))
         else:
             self.weights = weights
 
@@ -166,7 +165,7 @@ class Feedforward:
                 
                 def step(iteration, opt_state):
                     weights = get_params(opt_state)
-                    objective, grads = jax.value_and_grad(self.objective)(weights)
+                    objective, grads = value_and_grad(self.objective)(weights)
                     self.objective_trace = np.vstack((self.objective_trace, objective))
                     self.weight_trace = np.vstack((self.weight_trace, weights))
                     opt_state = opt_update(iteration, grads, opt_state)
@@ -183,7 +182,8 @@ class Feedforward:
             if local_opt < optimal_obj:
                 opt_index = np.argmin(self.objective_trace[-100:])
                 self.weights = self.weight_trace[-100:][opt_index].reshape((1, -1))
-            weights_init = self.random.normal(0, 1, size=(1, self.D))
+            self.random_key, subkey = random.split(self.random_key)
+            weights_init = random.normal(subkey, shape=(1, self.D))
 
         self.objective_trace = self.objective_trace[1:]
         self.weight_trace = self.weight_trace[1:]
