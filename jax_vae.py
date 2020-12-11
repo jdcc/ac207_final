@@ -1,6 +1,6 @@
 from functools import partial
 
-from jax import random, value_and_grad, jit
+from jax import random, value_and_grad, jit, device_put
 from jax.experimental.optimizers import adam
 import jax.numpy as jnp
 import jax.scipy as jsp
@@ -70,7 +70,7 @@ def fit(rng_key, model, start_params, data, data_vari, step_size=1e-3, max_iter=
     opt_init, update_params, get_params = adam(step_size)
     opt_state = opt_init(start_params)
     history = []
-    my_elbo = jit(partial(general_objective, model=model, data=data, data_vari=data_vari))
+    my_elbo = jit(partial(general_objective, model=model, data=device_put(data), data_vari=data_vari))
     min_loss_params = (1e10, None)
     for i in trange(max_iter, smoothing=0):
         params = get_params(opt_state)

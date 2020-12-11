@@ -28,27 +28,30 @@ def mse_loss(params, predict, data):
     loss = ((preds - targets)**2).mean()
     return loss
 
-def fit(model, start_params, data, step_size=1e-3, max_iter=1000):
+def fit(predict, calc_loss, start_params, data, step_size=1e-3, max_iter=1000):
     '''
     Args:
-      *model: tuple of (predict, calc_loss)
+      *predict: function to predict
+      *calc_loss: function to calculate loss of predictions
       *start_params: weights and biases
       *data: data like (X, y)
     '''
     opt_init, update_params, get_params = adam(step_size)
     opt_state = opt_init(start_params)
     history = []
-    step_model = jit(partial(fit_step, model, data=data))
+    step = jit(partial(fit_step, predict, calc_loss, data=data))
+    min_loss_params = (1e10, None)
     for i in trange(max_iter, smoothing=0):
         params = get_params(opt_state)
-        loss, grads = step_model(params)
+        loss, grads = step(params)
         opt_state = update_params(i, grads, opt_state)
         output_layer_weights = grads[-2][0]
         output_layer_weight_mag = ((output_layer_weights.T@output_layer_weights)**0.5)[0][0]
+        if loss < min_loss_params[0]:
+            min_loss_params = (loss, params)
         history.append((loss, output_layer_weight_mag))
-    return get_params(opt_state), history
+    return min_loss_params, history
 
-def fit_step(model, params, data):
-    predict, calc_loss = model
+def fit_step(predict, calc_loss, params, data):
     loss, grads = value_and_grad(calc_loss)(params, predict, data)
     return loss, grads
