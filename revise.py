@@ -56,14 +56,16 @@ class Revise:
         return path
         
         
-    def show_path(self, path, dataset=None, zoom=False, landscape='loss'):
+    def show_path(self, path, dataset=None, zoom=False, landscape='loss', ax=None, fig=None):
         '''Assumes two-dimensional space'''
         landscape_fns = {
             'loss': self._loss_landscape,
             'likelihood': self._likelihood_landscape,
             'prob_target': self._prob_target_landscape
         }
-        (x, y), loss = landscape_fns[landscape]
+        grid, positions = self._grid_positions(dataset)
+        x, y = grid
+        loss = landscape_fns[landscape](positions).reshape(grid.shape[1:3])
         titles = {
             'loss': 'REVISE path against REVISE objective',
             'likelihood': 'REVISE path against data log-likelihood under VAE',
@@ -71,52 +73,56 @@ class Revise:
         }
         title = titles[landscape]
         chosen_point = path.x[0]
-        plt.contourf(x, y, loss, levels=100 if zoom else 50, cmap='viridis')
-        plt.colorbar()
+        if ax is None:
+            fig, ax = plt.subplots(1,1)
+        contour = ax.contourf(x, y, loss, levels=100 if zoom else 50, cmap='viridis')
+        fig.colorbar(contour, ax=ax)
         if dataset is not None:
-            plt.scatter(dataset.T[0], dataset.T[1], color='white', alpha=0.6)
-        plt.scatter(*chosen_point, color='red')
+            ax.scatter(dataset.T[0], dataset.T[1], color='white', alpha=0.6)
+        ax.scatter(*chosen_point, color='red')
         x_path = np.array(path.x)
         if zoom:
-            plt.xlim(x_path[:,0].min() - .1, x_path[:,0].max() + .1)
-            plt.ylim(x_path[:,1].min() - .1, x_path[:,1].max() + .1)
+            ax.set_xlim(x_path[:,0].min() - .1, x_path[:,0].max() + .1)
+            ax.set_ylim(x_path[:,1].min() - .1, x_path[:,1].max() + .1)
             title += ' (zoomed)'
         #iter_by = (x_path.shape[0] // 10) + 1
         #plt.plot(x_path[::iter_by,0], x_path[::iter_by,1], c='red', marker='o', alpha=0.7)
-        plt.title(title)
-        plt.plot(x_path[:,0], x_path[:,1], c='red', alpha=0.5, marker='.')
-        plt.show()
+        ax.set_title(title)
+        ax.plot(x_path[:,0], x_path[:,1], c='red', alpha=0.5, marker='.')
+        return ax
 
         
-    @cached_property
-    def _loss_landscape(self, grid=None):
+    def _loss_landscape(self, positions):
         '''Assumes two-dimensional space'''
-        grid, positions = self._grid_positions(grid)
         prob_target = self.classifier.predict(positions)
         target = numpy.ones_like(prob_target) * self._target_class
-        binary_crossentropy = -(xlogy(target, prob_target) + xlogy(1 - target, 1 - prob_target)).reshape(grid.shape[1:3])
-        return grid, binary_crossentropy
+        binary_crossentropy = -(xlogy(target, prob_target) + xlogy(1 - target, 1 - prob_target))
+        return binary_crossentropy
     
     
-    @cached_property
-    def _likelihood_landscape(self, grid=None):
-        grid, positions = self._grid_positions(grid)
+    def _likelihood_landscape(self, positions):
         z = self.vae.encode(positions)
         new_x = self.vae.decode(z[:,:2])
-        log_prob = numpy.sum(norm.logpdf(positions, new_x, self.vae.x_var ** 0.5), axis=1).reshape(grid.shape[1:3])
-        return grid, log_prob
+        log_prob = numpy.sum(norm.logpdf(positions, new_x, self.vae.x_var ** 0.5), axis=1)
+        return log_prob
     
     
-    @cached_property
-    def _prob_target_landscape(self, grid=None):
-        grid, positions = self._grid_positions(grid)
-        prob_target = (self.classifier.predict(positions)).reshape(grid.shape[1:3])
-        return grid, prob_target
+    def _prob_target_landscape(self, positions):
+        prob_target = self.classifier.predict(positions)
+        return prob_target
     
     
-    def _grid_positions(self, grid=None):
-        if grid is None:
+    def _grid_positions(self, dataset=None, grid=None):
+        if grid is None and dataset is None:
             grid = numpy.mgrid[-5:5:0.2,-5:5:0.2]
+        if dataset is not None:
+            x_lim = (dataset[:,0].min(), dataset[:,0].max())
+            y_lim = (dataset[:,1].min(), dataset[:,1].max())
+            x_margin = (x_lim[1]-x_lim[0]) * 0.2
+            y_margin = (y_lim[1]-y_lim[0]) * 0.2
+            grid = numpy.mgrid[
+                x_lim[0]-x_margin:x_lim[1]+x_margin:(x_lim[1]-x_lim[0])/100,
+                y_lim[0]-y_margin:y_lim[1]+y_margin:(y_lim[1]-y_lim[0])/100]
         x, y = grid
         return grid, numpy.vstack((x.flatten(), y.flatten())).T
     
