@@ -75,4 +75,3 @@ def fit(classifier, calc_loss, data, step_size=1e-3, max_iter=1000):
 def fit_step(predict, calc_loss, params, data):
     loss, grads = value_and_grad(calc_loss)(params, predict, data)
     return loss, grads
-
